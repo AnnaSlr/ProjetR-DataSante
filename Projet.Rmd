@@ -1,9 +1,7 @@
 ---
 title: "Projet"
 output: html_notebook
-editor_options: 
-  markdown: 
-    wrap: 72
+autors: Anna Soulier, Franz Goldet
 ---
 
 # Cardiovascular Disease
