@@ -1,0 +1,595 @@
+---
+title: "Projet"
+date : 01/03/2024
+output: html_notebook
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Cardiovascular Disease
+
+Ce projet décrit l'étude et l'analyse d'un jeu de données sur la
+présence ou non de maladies cardio-vasculaires.
+
+## Sommaire
+
+-   Pré-traitement des données
+    -   Importation du jeu de données
+    -   Vue d'ensemble
+    -   Données manquantes et doublons
+    -   Pré-traitement
+        -   Modification de l'âge
+        -   Ajout de l'IMC
+        -   Vérification de la cohérence des données
+            -   Pression sanguine systolique
+            -   Pression sanguine diastolique
+            -   IMC/BMI
+        -   Équilibrage des données
+-   Statistiques descriptives
+    -   Densité de distribution
+    -   Matrice de corrélation inter-variables
+-   Approches non supervisées
+    -   Analyse factorielle
+    -   Clustering
+-   Machine-learning et évaluation du modèle
+    -   Préparation des données de train/test
+    -   Random Forest
+    -   Métriques d'évaluation
+    -   Interprétation
+        -   Importances des variables
+        -   PDP
+        -   ICE
+        -   LIME
+
+## 1. Pré-traitement des données
+
+### 1.1. Importation du jeu de données
+
+Nous avons récupéré nos données sur Kaggle :
+<https://www.kaggle.com/datasets/akshatshaw7/cardiovascular-disease-dataset/data>
+
+```{r}
+library(readr)
+table_all=read.csv("health_data.csv")
+```
+
+### 1.2. Vue d'ensemble
+
+```{r}
+library(dplyr)
+glimpse(table_all)
+summary(table_all)
+```
+
+**Features:**
+
+-   **Age** \| Objective Feature \| **age** \| int (days)
+-   **Height** \| Objective Feature \| **height** \| int (cm) \|
+-   **Weight** \| Objective Feature \| **weight** \| float (kg) \|
+-   **Gender** \| Objective Feature \| **gender** \| categorical code \|
+    0: male, 1: female
+-   **Systolic blood pressure** \| Examination Feature \| **ap_hi** \|
+    int \|
+-   **Diastolic blood pressure** \| Examination Feature \| **ap_lo** \|
+    int \|
+-   **Cholesterol** \| Examination Feature \| **cholesterol** \| 1:
+    normal, 2: above normal, 3: well above normal \|
+-   **Glucose** \| Examination Feature \| **gluc** \| 1: normal, 2:
+    above normal, 3: well above normal \|
+-   **Smoking** \| Subjective Feature \| **smoke** \| binary \|
+-   **Alcohol intake** \| Subjective Feature \| **alco** \| binary \|
+-   **Physical activity** \| Subjective Feature \| **active** \| binary
+    \|
+-   **Presence or absence of cardiovascular disease** \| **Target
+    Variable** \| **cardio** \| binary \|
+
+### 1.3. Données manquantes et doublons
+
+```{r}
+naniar::miss_var_summary(table_all)
+```
+
+Il n'y a pas de données manquantes.
+
+```{r}
+table_all[duplicated(table_all[,c(2)]), ] #Il n'y a pas de doublons, on retire la colonne id et x
+```
+
+Il n'y a pas de double.
+
+### 1.4. Pré-traitement
+
+```{r}
+# Nous passons les données en facteur
+table_all <- table_all[, -c(1, 2)] #on enleve l'id et X car pas de double
+
+table_analysis=data.frame(
+  age=table_all[,1],
+  gender= factor(as.factor(table_all[,2]), labels = c("M","F")),
+  height = table_all[,3],
+  weight = table_all[,4],
+  ap_hi = table_all[,5],
+  ap_lo = table_all[,6],
+  cholesterol = factor(as.factor(table_all[,7]), labels = c("Normal","AboveN", "WellAboveN")),
+  gluc = factor(as.factor(table_all[,8]),labels = c("Normal","AboveN", "WellAboveN")),
+  smoke = factor(as.factor(table_all[,9]),labels = c("No","Yes")),
+  alco = factor(as.factor(table_all[,10]),labels = c("No","Yes")),
+  active = factor(as.factor(table_all[,11]),labels = c("No","Yes")),
+  cardio = factor(as.factor(table_all[,12]),labels = c("No","Yes")))
+```
+
+#### 1.4.1. Modifier l'âge pour qu'il soit en année
+
+```{r}
+table_analysis$age <- as.integer(table_analysis$age / 365.25)
+#summary(table_analysis)
+```
+
+#### 1.4.2. Ajout de l'IMC (BMI)
+
+Nous considérons que l'IMC de la personne est plus représentatif que les
+données taille/poids.
+
+```{r}
+table_analysis <- table_analysis %>% 
+  mutate(BMI = weight / (height / 100) ^ 2) %>%
+  select(gender, age, BMI, ap_hi, ap_lo, cholesterol, gluc, smoke, alco, active, cardio)
+
+#summary(table_analysis)
+```
+
+#### 1.4.3. Vérification de la cohérence des données
+
+Il y a des données aberrantes : on cherche donc à les retirer pour le
+reste de l'analyse.
+
+##### Systolic blood pressure (mmHg)
+
+On doit avoir des pressions autour de 120 mmHg (tout résultat négatif ou
+supérieur à 300 n'a pas de sens).
+
+```{r}
+threshold_max_aphi <- 300 #on enlevel des données de la forme 1410 au lieu de 141
+threshold_min_aphi <- 30 #on enleve des données de la forme 14.1 au lieu de 141
+
+
+count_rows_min <- nrow(table_analysis[table_analysis$ap_hi < threshold_min_aphi, , drop = FALSE])
+count_rows_max <- nrow(table_analysis[table_analysis$ap_hi > threshold_max_aphi, , drop = FALSE])
+print(paste("Nous avons retiré : ",count_rows_min, "+", count_rows_max, "lignes de données incohérentes"))
+table_analysis <- table_analysis %>% filter(ap_hi < threshold_max_aphi)
+table_analysis <- table_analysis %>% filter(ap_hi > threshold_min_aphi)
+
+hist(table_analysis$ap_hi)
+boxplot(table_analysis$ap_hi)
+```
+
+##### Systolic blood pressure (mmHg)
+
+On doit avoir des pressions autour de 80 mmHg (tout résultat négatif ou
+supérieur à 300 n'a pas de sens).
+
+```{r}
+threshold_max_aplo <- 300 #on enlevel des données de la forme 1410 au lieu de 141
+threshold_min_aplo <- 20 #on enleve des données de la forme 14.1 au lieu de 141
+
+count_rows_min <- nrow(table_analysis[table_analysis$ap_lo < threshold_min_aplo, , drop = FALSE])
+count_rows_max <- nrow(table_analysis[table_analysis$ap_lo > threshold_max_aplo, , drop = FALSE])
+print(paste("Nous avons retiré : ",count_rows_min, "+", count_rows_max, "lignes de données incohérentes"))
+table_analysis <- table_analysis %>% filter(ap_lo < threshold_max_aplo)
+table_analysis <- table_analysis %>% filter(ap_lo > threshold_min_aplo)
+
+hist(table_analysis$ap_lo)
+boxplot(table_analysis$ap_lo)
+```
+
+##### IMC / BMI
+
+On retire les IMC incohérentes (en dessous de 10 et au-dessus de 50)
+
+```{r}
+threshold_max_bmi <- 50 
+threshold_min_bmi <- 10
+
+count_rows_min <- nrow(table_analysis[table_analysis$BMI < threshold_min_bmi, , drop = FALSE])
+count_rows_max <- nrow(table_analysis[table_analysis$BMI > threshold_max_bmi, , drop = FALSE])
+print(paste("Nous avons retiré : ",count_rows_min, "+", count_rows_max, "lignes de données incohérentes"))
+table_analysis <- table_analysis %>% filter(BMI < threshold_max_bmi)
+table_analysis <- table_analysis %>% filter(BMI > threshold_min_bmi)
+
+hist(table_analysis$BMI)
+boxplot(table_analysis$BMI)
+```
+
+#### Résumé des données
+
+```{r}
+summary(table_analysis)
+```
+
+### 1.4.4. Équilibrage
+
+Nous regardons l'équilibrage entre les patients malades et non-malades
+ainsi que l'équilibrage de chaque variable en fonction de la présence ou
+non de la maladie.
+
+```{r}
+round(prop.table(table(table_analysis$cardio)), 3)
+table(table_analysis$cardio)
+```
+
+Oui, c'est équilibré par rapport à la variable *cardio.*
+
+On regarde l'équilibrage des autres variables.
+
+```{r}
+#Pour avoir une premiere exploration plus précise, nous construisons une nouvelle table avec la séparation des données numériques en 3 groupes
+
+ageQ=cut(table_analysis$age,breaks=quantile(table_analysis$age,c(0,.33,.66,1)),labels=c("AgeA","AgeB","AgeC"),include.lowest = TRUE)
+ap_hiQ = cut(table_analysis$ap_hi,breaks=quantile(table_analysis$ap_hi,c(0,.18,.66,1)),labels=c("APHIA","APHIB","APHIC"),include.lowest = TRUE)
+ap_loQ = cut(table_analysis$ap_lo,breaks=quantile(table_analysis$ap_lo,c(0,.20,.66,1)),labels=c("APLOA","APLOB","APLOC"),include.lowest = TRUE)
+BMIQ = cut(table_analysis$BMI,breaks=quantile(table_analysis$BMI,c(0,.33,.66,1)),labels=c("bmiA","bmiB","bmiC"),include.lowest = TRUE)
+
+
+tableQ=data.frame(table_analysis,ageQ,ap_hiQ,ap_loQ,BMIQ)
+tableQ=tableQ[,-c(2,3,4,5)]
+summary(tableQ)
+```
+
+```{r}
+library(table1)
+
+pvalue <- function(x, ...) {
+    # Construct vectors of data y, and groups (strata) g
+    y <- unlist(x)
+    g <- factor(rep(1:length(x), times=sapply(x, length)))
+    if (is.numeric(y)) {
+        # For numeric variables, perform a standard 2-sample t-test
+        p <- t.test(y ~ g)$p.value
+    } else {
+        # For categorical variables, perform a chi-squared test of independence
+        p <- chisq.test(table(y, g))$p.value
+    }
+    # Format the p-value, using an HTML entity for the less-than sign.
+    # The initial empty string places the output on the line below the variable label.
+    c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+
+table1(~ . | cardio, tableQ, overall=F, extra.col=list('P_value'=pvalue))
+```
+
+Les données semblent équilibrées, de plus, nous avons une première
+exploration des données.
+
+Nous pouvons commencer à identifier des potentielles variables, facteur
+de risque ou de protection vis-à-vis de la maladie cardiovasculaire :
+
+-   **ap_hi** (augmente le risque avec l'augmentation de la pression)
+-   **ap_lo** (augmente le risque avec l'augmentation de la pression)
+-   **bmi** (augmente le risque avec l'augmentation du bmi)
+-   **cholesterol** (augmente le avec l'augmentation de cholestérol)
+-   **gluc** (augmente le avec l'augmentation du glucose)
+-   **active** (diminue le risque avec la pratique d'une activité
+    physique)
+
+## 2. Statistiques descriptives
+
+### 2.1. Densité de distribution
+
+```{r}
+library(ggplot2)
+
+plot_d <- function(d_data, var_name) {
+  ggplot(d_data, aes(x = x, fill=as.factor(cardio)),) +
+    geom_density(alpha = 0.5) + 
+    labs(title = paste("Distribution of", var_name),
+         x = var_name)
+}
+plot_h <- function(d_data, var_name) {
+  ggplot(d_data, aes(x = x, fill = as.factor(cardio))) +
+    geom_bar() +
+    labs(title = paste("Distribution of", var_name),
+         x = var_name,
+         y = "Count")
+}
+
+
+vars_to_plot <- c("age", "BMI", "ap_hi", "ap_lo")
+vars_to_plot2 <- c( "smoke","gender", "active", "cholesterol", "gluc")
+
+for (var in vars_to_plot) {
+  d_data <- as.data.frame(table_analysis)
+  d_data$x <- d_data[[var]]
+  print(plot_d(d_data, var))
+}
+for (var in vars_to_plot2) {
+  d_data <- data.frame(table_analysis) 
+  d_data$x <- d_data[[var]]
+  print(plot_h(d_data, var))
+}
+```
+
+D'après ces graphes, nous remarquons que des facteurs semblent
+effectivement se démarquer :
+
+-   l'âge
+-   ap_hi
+-   ap_lo
+-   bmi
+-   cholestérol
+-   glucose
+
+### 2.2. Matrice de corrélation inter-variables
+
+```{r}
+library(Hmisc)
+library(corrplot)
+table_analysis_numeric <- as.data.frame(sapply(table_analysis, as.numeric))
+matrice_correlation <- cor(table_analysis_numeric)
+rcorr(matrice_correlation)
+corrplot(matrice_correlation, method = "circle")
+```
+
+Cette matrice est une manière plus visuelle de mettre en avant la
+corrélation entre les variables et notre variable cible *cardio.*
+
+## 3. Approches non supervisées
+
+### 3.1. Analyse factorielle (ACM)
+
+```{r}
+library(ade4)  
+d <- lapply(tableQ[,-7],as.factor) 
+var_sup <- tableQ[,"cardio"] 
+acm <- dudi.acm(d, scannf = FALSE, nf = 5) 
+acm$supv <- supcol(acm, dudi.acm(var_sup, scannf = FALSE, nf = 5)$tab)
+```
+
+```{r}
+library(explor) 
+explor(acm)
+```
+
+Cette visualisation permet de mettre en évidence de potentiels liens
+entre :
+
+-   **cadioYes** et AgeC(élevé), cholesterolWellAboveN, glucWellAboveN,
+    aploC(élevé), aphiC(élevé)
+-   **cardioNo** et BMIA(faible), cholesterolNormal, glucNormal
+
+On passe maintenant à un clustering.
+
+### 3.2. Clustering
+
+```{r}
+library(FactoMineR)
+library(factoextra)
+library(caret)
+
+index <- createDataPartition(tableQ$cardio, time = 1, p=0.1, list=FALSE) # on est obligé de réduire car le dataset est trop gros
+
+table_petit <- as.data.frame(lapply(tableQ[index,], as.factor))
+table_mca = MCA(table_petit ,quali.sup = c(7))
+hcpc <-HCPC(table_mca,nb.clust = 2)
+```
+
+On voit bien les 2 clusters contenant respectivement :
+
+-   CardioYes -\> glucAboveN, glucWellAboveN, bmiC,
+    cholesterolWellAboveN, cholesterolAboveN,aploC,aphiC
+-   CardioNo -\> aphiA, aploA, ageA, bmiA, aphiB, aploB
+
+## 4. Machine learning et évaluation du modèle
+
+Nous souhaitons prédire la variable *cardio* qui est un binaire
+indiquant ou non la présence d'une maladie cardiovasculaire.
+
+### 4.1. Préparation des données de train/test
+
+```{r}
+#définition des data de train et test pour le modèles (avec vérification de leur équilibrage)
+
+library(caret)
+index <- createDataPartition(table_analysis$cardio, time = 1, p=0.7, list=FALSE)
+
+data_train <- table_analysis[index, ]
+data_test <- table_analysis[-index, ]
+
+prop.table(table(data_test$cardio))
+prop.table(table(data_train$cardio))
+```
+
+### 4.2. Random Forest
+
+```{r}
+library(caret)
+
+model_rf_caret <- train(cardio ~ ., data = data_train, method = "rf", ntree = 100, trControl = trainControl(method = "cv", number = 5))
+```
+
+### 4.3. Métriques d'évaluation
+
+```{r}
+prediction_rf_caret <- predict(model_rf_caret, newdata = data_test)
+
+precision_rf_caret <- sum(prediction_rf_caret == "Yes" & data_test$cardio == "Yes") / sum(prediction_rf_caret == "Yes")
+
+recall_rf_caret <- sum(prediction_rf_caret == "Yes" & data_test$cardio == "Yes") / sum(data_test$cardio == "Yes")
+
+f1_score_rf_caret <- 2 * (precision_rf_caret * recall_rf_caret) / (precision_rf_caret + recall_rf_caret)
+
+
+conf_matrix_rf_caret <- table(prediction_rf_caret, data_test$cardio)
+print(conf_matrix_rf_caret)
+accuracy <- sum(diag(conf_matrix_rf_caret)) / sum(conf_matrix_rf_caret)
+
+
+print(paste("Accuracy :",accuracy))
+print(paste("Precision :",precision_rf_caret))
+print(paste("Recall :",recall_rf_caret))
+print(paste("F1_score :",f1_score_rf_caret))
+```
+
+En premier lieu, nous étions déçus des résultats de ces différentes
+métriques.
+
+Mais après comparaison avec les codes proposés sur Kaggle (où nous avons
+récupéré le dataset :
+<https://www.kaggle.com/code/sajjadhussain473/cardic-calssification>),
+nous avons des résultats totalement dans la moyenne de ce que les autres
+ont obtenu avec ce jeu de données.
+
+### 4.4. Interprétation
+
+#### 4.4.1. Importances des variables
+
+```{r}
+#on cherche d'abord les variable les + influançantes du modèle :
+
+plot(varImp(model_rf_caret))
+```
+
+D'après ce graphique, les caractéristiques les plus importantes pour la
+prédiction sont :
+
+-   la pression systolique **(ap_hi)**
+-   la pression diastolique **(ap_lo)**
+-   l'**age**
+-   l'imc / **bmi**
+-   le taux de **cholesterol**
+
+#### 4.4.2 PDP
+
+Nous affichons maintenant le graphique **PDP(Partial Dependence Plot)**
+par rapport aux différentes caractéristiques :
+
+```{r}
+library(pdp)
+library(ggplot2)
+
+plot_pdp <- function(pdp_data, var_name) {
+  ggplot(pdp_data, aes(x = x, y = yhat)) +
+    geom_line(color = "blue", size = 1) +
+    geom_point(color = "red") +
+    theme_minimal() +
+    labs(title = paste("Partial Dependence Plot for", var_name),
+         x = var_name,
+         y = "Partial Dependence") +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+
+
+vars_to_plot <- c("age", "gluc", "BMI", "ap_lo", "ap_hi", "smoke", "cholesterol", "active", "gender", "alco")
+
+for (var in vars_to_plot) {
+  # Generate Partial Dependence Plot for 'Petal.Length'
+  pdp_pl <- partial(model_rf_caret, pred.var = var)
+  # Convert the partial dependence data to a data frame for ggplot
+  pdp_data <- as.data.frame(pdp_pl)
+  pdp_data$x <- pdp_data[[var]]
+  # Plot the PDP with ggplot2
+  print(plot_pdp(pdp_data, var))
+}
+```
+
+Ces graphes permettent d'illustrer la **relation** (linéaire, monotone,
+ou plus complexe) **entre la prédiction et une des caractéristiques** du
+modèle (en **moyennant toutes les autres variables**).
+
+-   Relation monotone -\> la caractéristique à une influence constante
+    et directe. (gender / attention à l'échelle)
+-   Motifs non-monotones ou complexes -\> dépendances plus complexes
+    (age, ap_hi, ap_lo, bmi).
+
+#### 4.4.3. ICE
+
+Nous faisons maintenant le graphique **ICE (Individual Conditional
+Expectation).**
+
+```{r}
+
+plot_ice <- function(ice_data, var_name) {
+  ggplot(ice_data, aes(x = x, y = yhat)) +
+    
+    geom_line(aes(group = yhat.id), alpha = 0.1) + # Draw lines for each instance with slight transparency
+    labs(x = var_name, y = "Prediction", title = paste("ICE Plot for", var_name)) +
+    theme_minimal()
+}
+
+vars_to_plot <- c("age", "gluc", "BMI", "ap_lo", "ap_hi", "smoke", "cholesterol", "active", "gender", "alco")
+
+for (var in vars_to_plot) {
+  # generating ICE plots
+  ice_pl <- partial(model_rf_caret, pred.var = var, grid.resolution = 50, ice = TRUE)
+
+  # Assuming ice_pl is the ICE plot object generated from the pdp package
+  # Convert ICE plot data to a data frame if not already
+  ice_data <- as.data.frame(ice_pl)
+  ice_data$x <- ice_data[[var]]
+  
+
+  # Generate the plot with ggplot
+  print(plot_ice(ice_data, var))
+}
+```
+
+Ce type de graphe permet de visualiser **comment la prédiction du modèle
+change lorsqu'une caractéristique varie** (en gardant les autres
+constantes).
+
+Alors que le PDP montre l'effet moyen d'une caractéristique, les
+graphiques ICE illustrent cette relation pour des **instances
+individuelles**, offrant ainsi une image plus détaillée.
+
+#### 4.4.4. LIME
+
+Nous passons maintenant au **LIME (Local Interpretable Model-agnostic
+Explanations)**
+
+```{r}
+library(lime)
+
+# Prepare the lime explainer
+explainer <- lime::lime(data_train, model_rf_caret)
+
+# Select a specific instance from the test set to explain
+instance_to_explain <- data_test[c(100:125), ] # Explaining instances for illustration
+
+# Generate explanations
+explanations <- lime::explain(instance_to_explain, explainer,n_labels = 1, n_features = 3)
+
+# Print the explanations
+print(explanations)
+
+# Optionally, plot the explanations
+lime::plot_features(explanations)
+lime::plot_explanations(explanations)
+```
+
+Ce type de graphe permet de mettre en évidence à **l'échelle du
+patient** la **contribution de chaque caractéristique dans la
+prédiction** de sa maladie ou non.
+
+Nous observons :
+
+-   Caractéristique positive / bleue –\> augmentent la prédiction du
+    modèle
+-   Caractéristique négative / rouge -\> diminue la prédiction du modèle
+
+## Conclusion
+
+En conclusion, les modèles prédictifs apportent une approche prometteuse
+pour identifier les individus à risque de développer des maladies
+cardiovasculaires, offrant ainsi la possibilité d'intervenir de manière
+précoce.
+
+Cependant, ce jeu de données ne permet pas d'obtenir un modèle
+suffisamment précis et robuste dans la prédiction de maladie
+cardiovasculaire. Cela peut être due au fait que certains critères sont
+subjectifs et non quantifié de manière rigoureuse (smoke/active/alco).
+
+D'après les analyses menées, pour prévenir contre les maladies
+cardiovasculaires, il est important (surtout après 50 ans) de surveiller
+sa pression sanguine, son taux de cholestérol et de glucose (surtout
+quand ils sont élevés) ; ainsi que de garder une activité physique et de
+surveiller son poids.
