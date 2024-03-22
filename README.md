@@ -12,5 +12,5 @@ Dans notre notebook R, nous avons réalisé les tâches suivantes:
 - Prétraitement des données
 - Statistiques descriptives
 - Analyse non-supervisé (ACM)
-- Modélisation avec Deep Learning (Random Forest)
+- Modélisation avec Machine Learning (Random Forest)
 - Évaluation et Interprétation du modèle
